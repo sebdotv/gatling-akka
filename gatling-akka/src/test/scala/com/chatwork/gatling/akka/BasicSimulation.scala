@@ -1,6 +1,6 @@
 package com.chatwork.gatling.akka
 
-import akka.actor.{ Actor, ActorSystem, Props }
+import akka.actor.{ Actor, ActorRef, ActorSystem, Props }
 import com.typesafe.config.ConfigFactory
 import io.gatling.core.Predef._
 import com.chatwork.gatling.akka.Predef._
@@ -17,6 +17,9 @@ class BasicSimulation extends Simulation {
 
   // recipient actorRef
   val ponger = system.actorOf(PingerPonger.ponger)
+
+  // proxy actorRef
+  val pongerProxy = system.actorOf(PingerPonger.pongerProxy)
 
   // scenario definition
   val s = scenario("ping-pong-ping-pong")
@@ -47,11 +50,18 @@ class BasicSimulation extends Simulation {
       // find recipient and save it in session
       akkaActor("ping-4").to(ponger) ? PingerPonger.Ping check recipient.find.exists.saveAs("recipient")
     }
+    .exec {
+      // use extended ask pattern to get a ref to sender (test) actor
+      akkaActor("ping-5").to(pongerProxy).extendedAsk(PingerPonger.ExtendedPing) check expectMsg(PingerPonger.Pong)
+        .saveAs("proxyPong")
+    }
 
   // inject configurations
   setUp(
     s.inject(constantUsersPerSec(10) during (10 seconds))
-  ).protocols(akkaConfig).maxDuration(10 seconds)
+  ).protocols(akkaConfig)
+    .maxDuration(10 seconds)
+    .assertions(global.failedRequests.count is 0)
 }
 
 // simple ping-pong actor definition
@@ -62,6 +72,17 @@ object PingerPonger {
   class Ponger extends Actor {
     override def receive: Receive = {
       case Ping => sender() ! Pong
+      case ExtendedPing(replyTo) =>
+        assert(sender() != replyTo)
+        replyTo ! Pong
+    }
+  }
+
+  def pongerProxy: Props = Props(new PongerProxy)
+
+  class PongerProxy extends Actor {
+    override def receive: Receive = {
+      case msg => context.actorOf(ponger) ! msg
     }
   }
 
@@ -69,4 +90,5 @@ object PingerPonger {
 
   case object Pong
 
+  case class ExtendedPing(xreplyTo: ActorRef)
 }

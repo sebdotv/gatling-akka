@@ -4,6 +4,7 @@ import akka.actor.{ Actor, ActorRef }
 import com.chatwork.gatling.akka.action.AskAction
 import com.chatwork.gatling.akka.check.AkkaCheck
 import com.chatwork.gatling.akka.config.{ AkkaProtocol, AkkaProtocolComponents }
+import com.chatwork.gatling.akka.request.AskRequestBuilder.MessageFactory
 import io.gatling.commons.validation.Success
 import io.gatling.core.action.Action
 import io.gatling.core.action.builder.ActionBuilder
@@ -27,15 +28,19 @@ case class AskRequestBuilder(askAttributes: AskRequestAttributes) {
     copy(askAttributes = askAttributes.copy(sender = sender))
 
   def ask(message: Expression[Any]): AskRequestBuilder =
-    copy(askAttributes = askAttributes.copy(message = Some(message)))
+    extendedAsk(message.map(m => _ => m))
 
   def ?(message: Expression[Any]): AskRequestBuilder = ask(message)
+
+  def extendedAsk(messageFactory: Expression[MessageFactory]): AskRequestBuilder =
+    copy(askAttributes = askAttributes.copy(messageFactory = Some(messageFactory)))
 
   def check(checks: AkkaCheck*): AskRequestBuilder =
     copy(askAttributes = askAttributes.copy(checks = askAttributes.checks ::: checks.toList))
 }
 
 object AskRequestBuilder {
+  type MessageFactory = ActorRef => Any
   implicit def toActionBuilder(requestBuilder: AskRequestBuilder): AskActionBuilder = AskActionBuilder(requestBuilder)
 }
 
@@ -48,7 +53,7 @@ case class AskRequestAttributes(
     requestName: Expression[String],
     recipient: Expression[ActorRef],
     sender: Expression[ActorRef] = AskRequestAttributes.noSender,
-    message: Option[Expression[Any]] = None,
+    messageFactory: Option[Expression[MessageFactory]] = None,
     checks: List[AkkaCheck] = Nil
 ) extends AkkaRequestAttributes
 

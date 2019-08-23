@@ -1,9 +1,10 @@
 package com.chatwork.gatling.akka.action
 
 import akka.actor.ActorRef
-import akka.pattern.ask
+import akka.pattern.extended.ask
 import com.chatwork.gatling.akka.config.AkkaProtocol
 import com.chatwork.gatling.akka.request.AskRequestAttributes
+import com.chatwork.gatling.akka.request.AskRequestBuilder.MessageFactory
 import com.chatwork.gatling.akka.response.Response
 import io.gatling.commons.stats.{ KO, OK, Status }
 import io.gatling.commons.util.Clock
@@ -14,6 +15,7 @@ import io.gatling.core.check.Check
 import io.gatling.core.session.{ Expression, Session }
 import io.gatling.core.stats.StatsEngine
 import io.gatling.core.util.NameGen
+
 import scala.util.{ Failure, Success }
 
 case class AskAction(
@@ -30,7 +32,7 @@ case class AskAction(
 
   override def execute(session: Session): Unit = recover(session) {
     configureAttr(session).map {
-      case (requestName, sender, recipient, message) =>
+      case (requestName, sender, recipient, messageFactory) =>
         def writeData(session: Session, status: Status, _startTimeStamp: Long, logMessage: Option[String]) = {
           val requestEndTime = clock.nowMillis
           statsEngine.logResponse(
@@ -47,7 +49,7 @@ case class AskAction(
 
         val requestTimestamp = clock.nowMillis
         import system.dispatcher
-        recipient.ask(message)(protocol.askTimeout, sender).onComplete {
+        ask(recipient, messageFactory, sender)(protocol.askTimeout).onComplete {
           case Success(msg) =>
             val (sessionWithCheckUpdate, checkError) = Check.check(Response(msg, recipient), session, attr.checks)
             val status = checkError match {
@@ -65,18 +67,18 @@ case class AskAction(
 
   override def clock: Clock = coreComponents.clock
 
-  private def configureAttr(session: Session): Validation[(String, ActorRef, ActorRef, Any)] = {
-    val messageExpr: Expression[Any] = attr.message match {
+  private def configureAttr(session: Session): Validation[(String, ActorRef, ActorRef, MessageFactory)] = {
+    val messageFactoryExpr: Expression[MessageFactory] = attr.messageFactory match {
       case Some(expr) => expr
       case None =>
         (s: Session) =>
-          io.gatling.commons.validation.Failure("Message to send to an actor is required.")
+          io.gatling.commons.validation.Failure("MessageFactory to send to an actor is required.")
     }
     for {
-      requestName <- attr.requestName(session)
-      sender      <- attr.sender(session)
-      recipient   <- attr.recipient(session)
-      message     <- messageExpr(session)
-    } yield (requestName, sender, recipient, message)
+      requestName    <- attr.requestName(session)
+      sender         <- attr.sender(session)
+      recipient      <- attr.recipient(session)
+      messageFactory <- messageFactoryExpr(session)
+    } yield (requestName, sender, recipient, messageFactory)
   }
 }
